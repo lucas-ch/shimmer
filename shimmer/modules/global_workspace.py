@@ -543,28 +543,18 @@ class GlobalWorkspaceBase(
         return loss_output.loss
 
     def validation_step(  # type: ignore
-        self, data: RawDomainGroupT, batch_idx: int, dataloader_idx: int = 0
+        self, batch: Mapping[frozenset[str], Mapping[str, Any]], batch_idx: int
     ) -> STEP_OUTPUT:
         """Validation step used by lightning"""
 
-        batch = {frozenset(data.keys()): data}
-        for domain in data:
-            batch[frozenset([domain])] = {domain: data[domain]}
-        if dataloader_idx == 0:
-            return self.generic_step(batch, mode="val")
-        return self.generic_step(batch, mode="val/ood")
+        return self.generic_step(batch, mode="val")
 
     def test_step(  # type: ignore
-        self, data: Mapping[str, Any], batch_idx: int, dataloader_idx: int = 0
+        self, batch: Mapping[frozenset[str], Mapping[str, Any]], batch_idx: int
     ) -> STEP_OUTPUT:
         """Test step used by lightning"""
 
-        batch = {frozenset(data.keys()): data}
-        for domain in data:
-            batch[frozenset([domain])] = {domain: data[domain]}
-        if dataloader_idx == 0:
-            return self.generic_step(batch, mode="test")
-        return self.generic_step(batch, mode="test/ood")
+        return self.generic_step(batch, mode="test")
 
     def training_step(  # type: ignore
         self, batch: Mapping[frozenset[str], Mapping[str, Any]], batch_idx: int
@@ -574,14 +564,9 @@ class GlobalWorkspaceBase(
         return self.generic_step(batch, mode="train")
 
     def predict_step(  # type: ignore
-        self, data: Mapping[str, Any], batch_idx: int
+        self, batch: Mapping[frozenset[str], Mapping[str, Any]], batch_idx: int
     ) -> GWPredictionsBase:
         """Predict step used by lightning"""
-
-        batch = {frozenset(data.keys()): data}
-        for domain in data:
-            batch[frozenset([domain])] = {domain: data[domain]}
-
         domain_latents = self.encode_domains(batch)
         return self.forward(domain_latents)
 
