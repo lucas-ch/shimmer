@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Generator, Mapping
 from itertools import product
 from typing import TypedDict
+from itertools import combinations
 
 import torch
 
@@ -234,51 +235,43 @@ def contrastive_loss(
     contrastive_fn: ContrastiveLossType,
 ) -> dict[str, torch.Tensor]:
     """
-    Computes the contrastive loss.
-
-    This return multiple metrics:
-        * `contrastive_{domain_1}_and_{domain_2}` with the contrastive
-            between 2 domains;
-        * `contrastive_{domain_1}_and_{domain_2}_{metric}` with
-            additional metrics provided by the domain_mod's
-            `compute_cont_loss` output;
-        * `contrastives` with the average value of all
-            `contrastive_{domain_1}_and_{domain_2}` values.
-
-    Args:
-        gw_mod (`GWModuleBase`): The GWModule to use
-        latent_domains (`LatentsDomainGroupsT`): the latent unimodal groups
-        contrastive_fn (`ContrastiveLossType`): the contrastive function to apply
-
-    Returns:
-        `dict[str, torch.Tensor]`: a dict of metrics.
+    Calcule la perte contrastive pour toutes les paires possibles de domaines.
+    Supporte 2, 3 domaines ou plus.
     """
     losses: dict[str, torch.Tensor] = {}
     metrics: dict[str, torch.Tensor] = {}
-    keys: list[set[str]] = []
 
+    # On itère sur les groupes de latents (ex: frozenset de 3 domaines)
     for latents in latent_domains.values():
-        if len(latents) != 2:
-            continue
-
+        # On encode tous les domaines présents dans ce groupe d'un coup
+        # cont_latents sera un dict: { 'v_latents': z1, 'color': z2, 'attr': z3 }
         cont_latents = gw_mod.encode(latents)
-        for domain1, z1 in cont_latents.items():
-            for domain2, z2 in cont_latents.items():
-                selected_domains = {domain1, domain2}
-                if domain1 == domain2 or selected_domains in keys:
-                    continue
+        
+        # On récupère la liste des noms de domaines (ex: ['v_latents', 'color', 'attr'])
+        domain_names = list(cont_latents.keys())
 
-                keys.append(selected_domains)
+        # itertools.combinations(domain_names, 2) génère automatiquement 
+        # les paires uniques : (v_latents, color), (v_latents, attr), (color, attr)
+        for d1, d2 in combinations(domain_names, 2):
+            z1, z2 = cont_latents[d1], cont_latents[d2]
+            
+            loss_name = f"contrastive_{d1}_and_{d2}"
+            loss_output = contrastive_fn(z1, z2)
+            
+            losses[loss_name] = loss_output.loss
+            
+            # Ajout des métriques spécifiques à la paire
+            metrics.update(
+                {f"{loss_name}_{k}": v for k, v in loss_output.metrics.items()}
+            )
 
-                loss_name = f"contrastive_{domain1}_and_{domain2}"
-                loss_output = contrastive_fn(z1, z2)
-                losses[loss_name] = loss_output.loss
-                metrics.update(
-                    {f"{loss_name}_{k}": v for k, v in loss_output.metrics.items()}
-                )
+    if not losses:
+        return {}
 
+    # Calcul de la moyenne globale de toutes les paires calculées
     losses["contrastives"] = torch.stack(list(losses.values()), dim=0).mean()
     losses.update(metrics)
+    
     return losses
 
 

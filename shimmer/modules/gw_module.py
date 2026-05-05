@@ -178,6 +178,49 @@ class GWDecoder(nn.Sequential):
             nn.Linear(self.hidden_dim, self.out_dim),
         )
 
+class GWDecoder_sigmoid(nn.Sequential):
+    """A Decoder network for GWModules."""
+
+    def __init__(
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        n_layers: int,
+    ):
+        """
+        Initializes the decoder.
+
+        Args:
+            in_dim (`int`): input dimension
+            hidden_dim (`int`): hidden dimension
+            out_dim (`int`): output dimension
+            n_layers (`int`): number of hidden layers. The total number of layers
+                will be `n_layers` + 2 (one before, one after).
+        """
+
+        self.in_dim = in_dim
+        """input dimension"""
+
+        self.hidden_dim = hidden_dim
+        """hidden dimension"""
+
+        self.out_dim = out_dim
+        """output dimension"""
+
+        self.n_layers = n_layers
+        """
+        number of hidden layers. The total number of layers
+                will be `n_layers` + 2 (one before, one after)."""
+
+        super().__init__(
+            nn.Linear(self.in_dim, self.hidden_dim),
+            nn.ReLU(),
+            *get_n_layers(n_layers, self.hidden_dim),
+            nn.Linear(self.hidden_dim, self.out_dim),
+            nn.Sigmoid(),
+        )
+
 class GWDecoder_legacy(nn.Module):
     """A legacy Decoder network for GWModules with flexible layer configuration."""
     def __init__(
