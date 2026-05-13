@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Generator, Mapping
 from itertools import product
 from typing import TypedDict
-from itertools import combinations
+from itertools import combinations, chain
 
 import torch
 
@@ -99,60 +99,53 @@ def cycle_loss(
     latent_domains: LatentsDomainGroupsT,
     raw_data: RawDomainGroupsT,
 ) -> dict[str, torch.Tensor]:
-    """
-    Computes the cycle loss.
-
-    This return multiple metrics:
-        * `cycle_{domain_source}_through_{domain_target}` with the cycle of
-            a particular domain;
-        * `cycle_{domain_source}_through_{domain_target}_{metric}` with additional
-            metrics provided by the domain_mod's `compute_cy_loss` output;
-        * `cycles` with the average value of all
-            `cycle_{domain_source}_through_{domain_target}` values.
-
-    Args:
-        gw_mod (`GWModuleBase`): The GWModule to use
-        selection_mod (`shimmer.modules.selection.SelectionBase`): Selection mod to use
-        domain_mods (`Mapping[str, DomainModule]`): the domain modules
-        latent_domains (`LatentsDomainGroupsT`): the latent unimodal groups
-        raw_data (`RawDomainGroupsT`): raw input data
-
-    Returns:
-        `dict[str, torch.Tensor]`: a dict of metrics.
-    """
     losses: dict[str, torch.Tensor] = {}
     metrics: dict[str, torch.Tensor] = {}
-    for domains_source, latents_source in latent_domains.items():
-        if len(domains_source) > 1:
+
+    for domains_source_fset, latents_source in latent_domains.items():
+        if len(domains_source_fset) > 1:
             continue
-        domain_name_source = list(domains_source)[0]
-
+        
+        domain_name_source = list(domains_source_fset)[0]
         domain_mod = domain_mods[domain_name_source]
-        z = gw_mod.encode_and_fuse(latents_source, selection_mod)
-        for domain_name_target in domain_mods:
-            if domain_name_target == domain_name_source:
-                continue
+        
+        z_source = gw_mod.encode_and_fuse(latents_source, selection_mod)
+        
+        potential_targets = [d for d in domain_mods if d != domain_name_source]
 
-            x_pred = gw_mod.decode(z, domains={domain_name_target})
+        all_target_combos = chain.from_iterable(
+            combinations(sorted(potential_targets), r) 
+            for r in range(1, len(potential_targets) + 1)
+        )
 
-            x_recons = gw_mod.decode(
-                gw_mod.encode_and_fuse(x_pred, selection_mod),
-                domains={domain_name_source},
-            )
+        for combo in all_target_combos:
+            combo_set = set(combo)
+            
+            x_pred = gw_mod.decode(z_source, domains=combo_set)
+            z_cycle = gw_mod.encode_and_fuse(x_pred, selection_mod)
 
-            loss_name = f"{domain_name_source}_through_{domain_name_target}"
+            x_recons = gw_mod.decode(z_cycle, domains={domain_name_source})
+
+            target_label = "/".join(combo)
+            loss_name = f"{domain_name_source}_through_{target_label}"
+
             loss_output = domain_mod.compute_cy_loss(
                 x_recons[domain_name_source],
                 latents_source[domain_name_source],
-                raw_data[domains_source][domain_name_source],
+                raw_data[domains_source_fset][domain_name_source],
             )
+
             if loss_output is None:
                 continue
 
+            losses[f"cycle_{loss_name}"] = loss_output.loss
             metrics.update(
                 {f"cycle_{loss_name}_{k}": v for k, v in loss_output.metrics.items()}
             )
-            losses[f"cycle_{loss_name}"] = loss_output.loss
+
+    if not losses:
+        return {}
+
     losses["cycles"] = torch.stack(list(losses.values()), dim=0).mean()
     losses.update(metrics)
     return losses
@@ -165,69 +158,54 @@ def translation_loss(
     latent_domains: LatentsDomainGroupsT,
     raw_data: RawDomainGroupsT,
 ) -> dict[str, torch.Tensor]:
-    """
-    Computes the translation loss.
-
-    This return multiple metrics:
-        * `translation_{domain_source}_to_{domain_target}` with the translation
-            from a domain source to a domain target;
-        * `translation_{domain_source}_to_{domain_target}_{metric}` with
-            additional metrics provided by the domain_mod's
-            `compute_tr_loss` output;
-        * `translations` with the average value of all
-            `translation_{domain_source}_to_{domain_target}` values.
-
-    Args:
-        gw_mod (`GWModuleBase`): The GWModule to use
-        domain_mods (`Mapping[str, DomainModule]`): the domain modules
-        latent_domains (`LatentsDomainGroupsT`): the latent unimodal groups
-        raw_data (`RawDomainGroupsT`): raw input data
-
-    Returns:
-        `dict[str, torch.Tensor]`: a dict of metrics.
-    """
     losses: dict[str, torch.Tensor] = {}
     metrics: dict[str, torch.Tensor] = {}
-    for domains, latents in latent_domains.items():
-        if len(domains) < 2:
+
+    for domains_fset, latents in latent_domains.items():
+        if len(domains_fset) < 2:
             continue
-        for domain_name_target in domains:
-            domain_sources = {
-                domain: latents[domain]
-                for domain in domains
-                if domain != domain_name_target
-            }
-
-            z = gw_mod.encode_and_fuse(domain_sources, selection_mod)
-            mod = domain_mods[domain_name_target]
-
-            domain_source_names = "/".join(domain_sources.keys())
-            loss_name = f"{domain_source_names}_to_{domain_name_target}"
-            if loss_name in losses:
-                raise ValueError(f"{loss_name} is already computed.")
-
-            prediction = gw_mod.decode(z, domains={domain_name_target})[
-                domain_name_target
-            ]
-            loss_output = mod.compute_tr_loss(
-                prediction,
-                latents[domain_name_target],
-                raw_data[domains][domain_name_target],
+            
+        for domain_name_target in domains_fset:
+            potential_sources = [d for d in domains_fset if d != domain_name_target]
+            
+            all_source_combos = chain.from_iterable(
+                combinations(sorted(potential_sources), r) 
+                for r in range(1, len(potential_sources) + 1)
             )
-            if loss_output is None:
-                continue
 
-            losses[f"translation_{loss_name}"] = loss_output.loss
-            metrics.update(
-                {
-                    f"translation_{loss_name}_{k}": v
-                    for k, v in loss_output.metrics.items()
-                }
-            )
+            for combo in all_source_combos:
+                domain_sources = {d: latents[d] for d in combo}
+                
+                z = gw_mod.encode_and_fuse(domain_sources, selection_mod)
+                
+                prediction = gw_mod.decode(z, domains={domain_name_target})[domain_name_target]
+                
+                mod = domain_mods[domain_name_target]
+                loss_output = mod.compute_tr_loss(
+                    prediction,
+                    latents[domain_name_target],
+                    raw_data[domains_fset][domain_name_target],
+                )
+                
+                if loss_output is None:
+                    continue
+
+                source_label = "/".join(combo)
+                loss_key = f"{source_label}_to_{domain_name_target}"
+                
+                loss_name = f"translation_{loss_key}"
+                losses[loss_name] = loss_output.loss
+                
+                metrics.update(
+                    {f"{loss_name}_{k}": v for k, v in loss_output.metrics.items()}
+                )
+
+    if not losses:
+        return {}
+
     losses["translations"] = torch.stack(list(losses.values()), dim=0).mean()
     losses.update(metrics)
     return losses
-
 
 def contrastive_loss(
     gw_mod: GWModuleBase,
