@@ -13,6 +13,7 @@ from shimmer.modules.contrastive_loss import (
 from shimmer.modules.domain import DomainModule, LossOutput
 from shimmer.modules.global_workspace import (
     GlobalWorkspace2Domains,
+    GlobalWorkspaceFusion,
     GlobalWorkspaceBase,
     SchedulerArgs,
     batch_broadcasts,
@@ -33,7 +34,6 @@ from shimmer.modules.gw_module import (
     translation,
 )
 from shimmer.modules.losses import (
-    BroadcastLossCoefs,
     GWLosses2Domains,
     GWLossesBase,
     LossCoefs,
@@ -72,6 +72,7 @@ __all__ = [
     "SchedulerArgs",
     "GlobalWorkspaceBase",
     "GlobalWorkspace2Domains",
+    "GlobalWorkspaceFusion",
     "pretrained_global_workspace",
     "LossOutput",
     "DomainModule",
@@ -84,7 +85,6 @@ __all__ = [
     "contrastive_loss",
     "ContrastiveLoss",
     "LossCoefs",
-    "BroadcastLossCoefs",
     "combine_loss",
     "GWLossesBase",
     "GWLosses2Domains",
